@@ -1,12 +1,11 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
+	"sort"
 	"time"
 
 	"github.com/irai/packet"
@@ -26,61 +25,39 @@ func main() {
 		fmt.Println("argument --nic is required")
 		os.Exit(1)
 	}
-	packet.
 
-	session, err := packet.NewSession(nic)
-	if err != nil {
-		panic(err)
+	run(nic)
+
+	ticks := time.Tick(15 * time.Second)
+	for range ticks {
+		run(nic)
 	}
-	defer session.Close()
+}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
+func run(nic string) {
+	addrs, err := packet.LoadLinuxARPTable(nic)
+	if err != nil {
+		fmt.Println("error loading linux arp table:", err)
+		return
+	}
 
-	go func() {
-		log.Println("session starting")
-		for notification := range session.C {
-			status := "offline"
-			if notification.Online {
-				status = "online"
-			}
-
-			log.Printf("%s (%s) is %s: %s", notification.Addr.MAC, notification.Addr.IP, status, notification)
-			session.PrintTable()
+	sort.Slice(addrs, func(i, j int) bool {
+		if addrs[i].IP.Is6() && addrs[j].IP.Is6() {
+			return addrs[i].IP.String() < addrs[j].IP.String()
 		}
-	}()
-
-	go func() {
-		buf := make([]byte, 0)
-		for {
-			select {
-			case <-ctx.Done():
-				log.Println("stopping packet processing")
-				return
-			default:
-			}
-
-			n, _, err := session.ReadFrom(buf)
-			if err != nil {
-				log.Println("failed reading from session:", err)
-				continue
-			}
-			if n == 0 {
-				time.Sleep(time.Millisecond * 250)
-				continue
-			}
-
-			frame, err := session.Parse(buf[:n])
-			if err != nil {
-				log.Println("failed parsing buffer:", err)
-				continue
-			}
-
-			log.Printf("%s -> %s: size %d", frame.SrcAddr, frame.DstAddr, n)
+		if addrs[i].IP.Is4() && addrs[j].IP.Is4() {
+			return int(addrs[i].IP.As4()[3]) < int(addrs[j].IP.As4()[3])
 		}
-	}()
+		return addrs[i].IP.Is4()
+	})
 
-	<-ctx.Done()
-	session.Close()
-	log.Println("stopped")
+	log.Println("--- arp table ---")
+	for _, addr := range addrs {
+		name := packet.FindManufacturer(addr.MAC)
+		if name == "" {
+			name = "unknown"
+		}
+		log.Printf("%s manufacturer=%s", addr, name)
+	}
+	log.Println("--- end ---")
 }
