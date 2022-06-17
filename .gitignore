@@ -1,0 +1,5 @@
+.idea/
+vendor/
+
+# project specific
+bin/
