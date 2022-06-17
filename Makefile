@@ -11,8 +11,6 @@ package: build ${TAR}
 
 .PHONY:
 build: ${BINARY}
-	echo ${BINARY}
-	ls -l ${BINARY}
 
 ${BINARY}: vendor
 	${TARGET_ARGS} go build -mod=vendor -o ${BINARY} .
