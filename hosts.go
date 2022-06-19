@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/irai/packet"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/go-logr/stdr"
+	"github.com/irai/packet"
 )
 
 type ChangeType int
@@ -49,8 +52,14 @@ type member struct {
 	lastSeen time.Time
 }
 
+func (m member) String() string {
+	return fmt.Sprintf("%s lastSeen=(%s)", m.addr.String(), m.lastSeen.Format(time.RFC3339))
+}
+
 type HostMap struct {
 	changes chan Change
+
+	logger logr.Logger
 
 	hosts     map[string][]*member
 	hostsLock *sync.Mutex
@@ -61,9 +70,15 @@ func NewHostMap() *HostMap {
 		changes:   make(chan Change, 128),
 		hosts:     make(map[string][]*member),
 		hostsLock: &sync.Mutex{},
+
+		logger: stdr.New(log.Default()),
 	}
 
 	return h
+}
+
+func (h *HostMap) SetLogger(logger logr.Logger) {
+	h.logger = logger
 }
 
 func (h *HostMap) Load(nic string) error {
@@ -81,7 +96,6 @@ func (h *HostMap) Load(nic string) error {
 func (h *HostMap) update(addr packet.Addr, emitChanges bool) bool {
 	mac := addr.MAC.String()
 	if mac == "" {
-		log.Println("skipping addr with no mac:", addr.String())
 		return false
 	}
 
@@ -185,7 +199,7 @@ func (h *HostMap) sendChange(change Change) {
 	select {
 	case h.changes <- change:
 	default:
-		log.Println("dropping change, notification channel full:", change)
+		h.logger.Info("dropping change, notification channel full", "change", change)
 	}
 }
 
@@ -210,7 +224,7 @@ func (h *HostMap) PrintTable() {
 		if name == "" {
 			name = "unknown"
 		}
-		log.Printf("%s manufacturer=%s", m[0].addr, name)
+		h.logger.Info("current table", "mac", m[0].addr.MAC, "members", m, "manufacturer", name)
 	}
 }
 

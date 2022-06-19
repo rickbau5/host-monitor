@@ -2,7 +2,11 @@ module github.com/rickbau5/host-monitor
 
 go 1.18
 
-require github.com/irai/packet v0.3.0
+require (
+	github.com/go-logr/logr v1.2.3
+	github.com/go-logr/stdr v1.2.2
+	github.com/irai/packet v0.3.0
+)
 
 require (
 	github.com/mdlayher/netx v0.0.0-20200512211805-669a06fde734 // indirect
