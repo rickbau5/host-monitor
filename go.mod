@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/go-logr/logr v1.2.3
 	github.com/go-logr/stdr v1.2.2
+	github.com/google/gopacket v1.1.19
 	github.com/insomniacslk/dhcp v0.0.0-20220504074936-1ca156eafb9f
 	github.com/irai/packet v0.3.0
 )

@@ -77,8 +77,10 @@ func main() {
 					continue
 				}
 
-				clientName := string(dhcpPacket.Options.Get(dhcpv4.OptionHostName))
-				log.Printf("dhcp packet from '%s': %s -> %s: size %d", clientName, frame.SrcAddr, frame.DstAddr, n)
+				hostName := string(dhcpPacket.Options.Get(dhcpv4.OptionHostName))
+				manufacturer := packet.FindManufacturer(frame.SrcAddr.MAC)
+				log.Printf("dhcp(%d) from %s(ip=%s), hostname=(%s), manufacturer=(%s)",
+					dhcpPacket.OpCode, frame.SrcAddr.MAC, frame.SrcAddr.IP, hostName, manufacturer)
 			}
 		}
 	}()
