@@ -3,13 +3,25 @@ package hostmonitor
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
-	"github.com/irai/packet"
 )
+
+// From https://github.com/irai/packet/blob/3d13deba3c30b27bbb6da8ec122a96e45fe92a27/addr.go#L12-L16
+type Addr struct {
+	MAC  net.HardwareAddr
+	IP   netip.Addr
+	Port uint16
+}
+
+func (addr Addr) String() string {
+	return fmt.Sprintf("mac=(%s) ip=(%s) port=(%d)", addr.MAC, addr.IP, addr.Port)
+}
 
 type ChangeType int
 
@@ -35,20 +47,20 @@ func (ct ChangeType) String() string {
 
 type Change struct {
 	ChangeType ChangeType
-	Addr       packet.Addr
+	Addr       Addr
 	Online     bool
 
-	PreviousAddr *packet.Addr
+	PreviousAddr *Addr
 	LastSeen     time.Time
 }
 
 func (c Change) String() string {
 	return fmt.Sprintf("change=(%s) online=(%v) addr=(%s) previousAddr=(%s) lastSeen=(%s)",
-		c.ChangeType, c.Online, c.PreviousAddr, c.LastSeen, c.Addr)
+		c.ChangeType, c.Online, c.Addr, c.PreviousAddr, c.LastSeen)
 }
 
 type member struct {
-	addr     packet.Addr
+	addr     Addr
 	lastSeen time.Time
 }
 
@@ -81,19 +93,7 @@ func (h *HostMap) SetLogger(logger logr.Logger) {
 	h.logger = logger
 }
 
-func (h *HostMap) Load(nic string) error {
-	addrs, err := packet.LoadLinuxARPTable(nic)
-	if err != nil {
-		return err
-	}
-
-	for _, addr := range addrs {
-		h.update(addr, false)
-	}
-	return nil
-}
-
-func (h *HostMap) update(addr packet.Addr, emitChanges bool) bool {
+func (h *HostMap) update(addr Addr, emitChanges bool) bool {
 	mac := addr.MAC.String()
 	if mac == "" {
 		return false
@@ -168,7 +168,7 @@ func (h *HostMap) reap() bool {
 	for key, members := range h.hosts {
 		var newMembers []*member
 		for _, m := range members {
-			if now.Sub(m.lastSeen) < time.Second*15 {
+			if now.Sub(m.lastSeen) < 5*time.Minute {
 				newMembers = append(newMembers, m)
 				continue
 			}
@@ -203,7 +203,7 @@ func (h *HostMap) sendChange(change Change) {
 	}
 }
 
-func (h *HostMap) UpdateAddresses(addrs []packet.Addr) bool {
+func (h *HostMap) UpdateAddresses(addrs []Addr) bool {
 	// update with the new addresses
 	var changed bool
 	for _, addr := range addrs {
@@ -220,7 +220,7 @@ func (h *HostMap) PrintTable() {
 	h.hostsLock.Lock()
 	defer h.hostsLock.Unlock()
 	for _, m := range h.hosts {
-		name := packet.FindManufacturer(m[0].addr.MAC)
+		name := FindManufacturer(m[0].addr.MAC)
 		if name == "" {
 			name = "unknown"
 		}

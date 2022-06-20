@@ -28,10 +28,13 @@ func main() {
 	}
 
 	hosts := hostmonitor.NewHostMap()
-	if err := hosts.Load(iface); err != nil {
+
+	addrs, err := packet.LoadLinuxARPTable(iface)
+	if err != nil {
 		fmt.Println("failed initial load:", err)
 		os.Exit(1)
 	}
+	hosts.UpdateAddresses(addrsToAddrs(addrs))
 
 	hosts.PrintTable()
 
@@ -46,9 +49,22 @@ func main() {
 		addrs, err := packet.LoadLinuxARPTable(iface)
 		if err != nil {
 			log.Println("error loading linux arp table:", err)
-			return
+			continue
 		}
 
-		_ = hosts.UpdateAddresses(addrs)
+		_ = hosts.UpdateAddresses(addrsToAddrs(addrs))
 	}
+}
+
+func addrsToAddrs(addrs []packet.Addr) []hostmonitor.Addr {
+	hmAddrs := make([]hostmonitor.Addr, len(addrs))
+	for i, addr := range addrs {
+		hmAddrs[i] = hostmonitor.Addr{
+			MAC:  addr.MAC,
+			IP:   addr.IP,
+			Port: addr.Port,
+		}
+	}
+
+	return hmAddrs
 }
