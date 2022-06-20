@@ -13,22 +13,22 @@ import (
 )
 
 var (
-	nic string
+	iface string
 )
 
 func init() {
-	flag.StringVar(&nic, "nic", "", "the name of the network interface to load the arp table for")
+	flag.StringVar(&iface, "iface", "", "the name of the network interface to load the arp table for")
 }
 
 func main() {
 	flag.Parse()
-	if nic == "" {
-		fmt.Println("argument --nic is required")
+	if iface == "" {
+		fmt.Println("argument --iface is required")
 		os.Exit(1)
 	}
 
 	hosts := hostmonitor.NewHostMap()
-	if err := hosts.Load(nic); err != nil {
+	if err := hosts.Load(iface); err != nil {
 		fmt.Println("failed initial load:", err)
 		os.Exit(1)
 	}
@@ -43,7 +43,7 @@ func main() {
 
 	ticks := time.Tick(15 * time.Second)
 	for range ticks {
-		addrs, err := packet.LoadLinuxARPTable(nic)
+		addrs, err := packet.LoadLinuxARPTable(iface)
 		if err != nil {
 			log.Println("error loading linux arp table:", err)
 			return

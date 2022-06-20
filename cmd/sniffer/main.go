@@ -13,21 +13,21 @@ import (
 )
 
 var (
-	nic string
+	iface string
 )
 
 func init() {
-	flag.StringVar(&nic, "nic", "", "set the nic to listen on")
+	flag.StringVar(&iface, "iface", "", "set the interface to listen on")
 }
 
 func main() {
 	flag.Parse()
-	if nic == "" {
-		fmt.Println("argument --nic is required")
+	if iface == "" {
+		fmt.Println("argument --iface is required")
 		os.Exit(1)
 	}
 
-	session, err := packet.NewSession(nic)
+	session, err := packet.NewSession(iface)
 	if err != nil {
 		panic(err)
 	}
@@ -71,7 +71,6 @@ func main() {
 			}
 			switch frame.PayloadID {
 			case packet.PayloadDHCP4:
-				log.Printf("packet => %x\n", buf[:n])
 				dhcpPacket, err := dhcpv4.FromBytes(frame.Payload())
 				if err != nil {
 					log.Println("error parsing packet:", err)
