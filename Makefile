@@ -10,6 +10,8 @@ SNIFFER=sniffer
 SNIFFER_CMD=${CMD_DIR}/${SNIFFER}
 SNIFFER_BINARY=${BINARY_DIR}/${SNIFFER}
 
+BINARY_NAMES=${ARPMON} ${SNIFFER} ${DHCP4_SERVER}
+
 TAR_NAME=host-monitor.tar.gz
 
 # this depends on how the Raspberry Pi is set up
@@ -18,21 +20,21 @@ TARGET_ARGS=GOOS=linux GOARCH=arm CGO_ENABLED=0
 package: build ${TAR}
 
 .PHONY:
-build: ${ARPMON_BINARY}
+build: ${ARPMON_BINARY} ${SNIFFER_BINARY}
 
-${ARPMON_BINARY}: vendor
-	${TARGET_ARGS} go build -mod=vendor -o ${ARPMON_BINARY} ${ARPMON_CMD}
+${ARPMON_BINARY}: ${ARPMON_CMD} vendor
+	${TARGET_ARGS} go build -mod=vendor -o $@ ./$<
 
-${SNIFFER_BINARY}: vendor
-	${TARGET_ARGS} go build -mod=vendor -o ${SNIFFER_BINARY} ${SNIFFER_CMD}
+${SNIFFER_BINARY}: ${SNIFFER_CMD} vendor
+	${TARGET_ARGS} go build -mod=vendor -o $@ ./$<
 
 .PHONY: vendor
-# vendor: vendor/vendor.txt
-# vendor/vendor.txt:
-# 	go mod vendor
+vendor: vendor/vendor.txt
+vendor/vendor.txt:
+	go mod vendor
 
 ${TAR}: ${ARPMON_BINARY} ${SNIFFER_BINARY}
-	pushd ${BINARY_DIR} && tar cvf ${TAR_NAME} ${ARPMON} ${SNIFFER}; popd
+	pushd ${BINARY_DIR} && tar cvf ${TAR_NAME} ${BINARY_NAMES}; popd
 
 .PHONY: clean
 clean:

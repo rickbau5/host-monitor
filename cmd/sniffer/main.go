@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/irai/packet"
@@ -46,7 +45,6 @@ func main() {
 			}
 
 			log.Printf("%s (%s) is %s: %s", notification.Addr.MAC, notification.Addr.IP, status, notification)
-			session.PrintTable()
 		}
 	}()
 
@@ -65,10 +63,6 @@ func main() {
 				log.Println("failed reading from session:", err)
 				continue
 			}
-			if n == 0 {
-				time.Sleep(time.Millisecond * 250)
-				continue
-			}
 
 			frame, err := session.Parse(buf[:n])
 			if err != nil {
@@ -78,7 +72,7 @@ func main() {
 			switch frame.PayloadID {
 			case packet.PayloadDHCP4:
 				log.Printf("packet => %x\n", buf[:n])
-				dhcpPacket, err := dhcpv4.FromBytes(buf[:n])
+				dhcpPacket, err := dhcpv4.FromBytes(frame.Payload())
 				if err != nil {
 					log.Println("error parsing packet:", err)
 					continue
