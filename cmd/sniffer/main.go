@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/irai/packet"
@@ -77,10 +78,24 @@ func main() {
 					continue
 				}
 
+				// try to find an IP
+				var ips []string
+				if frame.SrcAddr.IP.IsUnspecified() {
+					for _, addr := range session.FindByMAC(frame.SrcAddr.MAC) {
+						if !addr.IP.Is4() {
+							// skip IPV6 cause i don't like them
+							continue
+						}
+						ips = append(ips, addr.IP.String())
+					}
+				} else {
+					ips = []string{frame.SrcAddr.IP.String()}
+				}
+
 				hostName := string(dhcpPacket.Options.Get(dhcpv4.OptionHostName))
 				manufacturer := packet.FindManufacturer(frame.SrcAddr.MAC)
-				log.Printf("dhcp(%d) from %s(ip=%s), hostname=(%s), manufacturer=(%s)",
-					dhcpPacket.OpCode, frame.SrcAddr.MAC, frame.SrcAddr.IP, hostName, manufacturer)
+				log.Printf("dhcp(%d) from mac=(%s) ip=(%s) hostname=(%s) manufacturer=(%s)",
+					dhcpPacket.OpCode, frame.SrcAddr.MAC, strings.Join(ips, ","), hostName, manufacturer)
 			}
 		}
 	}()

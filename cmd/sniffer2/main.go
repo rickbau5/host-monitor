@@ -7,11 +7,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 )
 
 // adapted from pcapdump example https://github.com/google/gopacket/blob/master/examples/pcapdump/main.go
@@ -31,29 +29,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	inactive, err := pcap.NewInactiveHandle(*iface)
+	handle, closeFunc, err := NewHandle(*iface)
 	if err != nil {
-		log.Fatalf("could not create: %v", err)
+		log.Fatal("failed creating handle:", err)
 	}
-	defer inactive.CleanUp()
-	if err = inactive.SetSnapLen(snapLen); err != nil {
-		log.Fatalf("could not set snap length: %v", err)
-	} else if err = inactive.SetPromisc(true); err != nil {
-		log.Fatalf("could not set promisc mode: %v", err)
-	} else if err = inactive.SetTimeout(time.Second); err != nil {
-		log.Fatalf("could not set timeout: %v", err)
-	}
-
-	handle, err := inactive.Activate()
-	if err != nil {
-		log.Fatal("PCAP Activate error:", err)
-	}
-	defer handle.Close()
-
-	// set our filter for port 68 - dhcp packets
-	if err = handle.SetBPFFilter("udp port 68"); err != nil {
-		log.Fatal("BPF filter error:", err)
-	}
+	defer closeFunc()
 
 	source := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
 
@@ -68,7 +48,7 @@ func main() {
 
 type Handler func(ctx context.Context, dhcp *layers.DHCPv4) error
 
-func handler(ctx context.Context, dhcp *layers.DHCPv4) error {
+func handler(_ context.Context, dhcp *layers.DHCPv4) error {
 	manufacturer := FindManufacturer(dhcp.ClientHWAddr)
 	hostName := "<unknown>"
 	for _, opt := range dhcp.Options {
@@ -110,7 +90,7 @@ func readPackets(ctx context.Context, packets <-chan gopacket.Packet, handler Ha
 
 		dhcp, ok := layer.(*layers.DHCPv4)
 		if !ok {
-			log.Printf("unexpected layer type: %T", layer)
+			continue
 		}
 
 		if err := handler(ctx, dhcp); err != nil {
