@@ -3,10 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/irai/packet"
 	"log"
 	"os"
 	"time"
+
+	hostmonitor "github.com/rickbau5/host-monitor"
+
+	"github.com/irai/packet"
 )
 
 var (
@@ -24,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	hosts := NewHostMap()
+	hosts := hostmonitor.NewHostMap()
 	if err := hosts.Load(nic); err != nil {
 		fmt.Println("failed initial load:", err)
 		os.Exit(1)

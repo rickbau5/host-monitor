@@ -1,4 +1,4 @@
-package main
+package hostmonitor
 
 import (
 	"fmt"
