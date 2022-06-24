@@ -22,10 +22,14 @@ TAR_NAME=host-monitor.tar.gz
 # this depends on how the Raspberry Pi is set up
 TARGET_ARGS=GOOS=linux GOARCH=arm CGO_ENABLED=0
 
+.PHONY: build
+build: ${BINARIES}
+
+.PHONY: package
 package: build ${TAR}
 
-.PHONY:
-build: ${BINARIES}
+${TAR}: ${BINARIES}
+	pushd ${BINARY_DIR} && tar cvf ${TAR_NAME} ${BINARY_NAMES}; popd
 
 ${ARPMON_BINARY}: ${ARPMON_CMD} vendor
 	${TARGET_ARGS} go build -mod=vendor -o $@ ./$<
@@ -38,11 +42,9 @@ ${SNIFFER2_BINARY}: ${SNIFFER2_CMD} vendor
 
 .PHONY: vendor
 vendor: vendor/vendor.txt
+
 vendor/vendor.txt:
 	go mod vendor
-
-${TAR}: ${BINARIES}
-	pushd ${BINARY_DIR} && tar cvf ${TAR_NAME} ${BINARY_NAMES}; popd
 
 .PHONY: clean
 clean:

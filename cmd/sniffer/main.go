@@ -18,13 +18,13 @@ var (
 )
 
 func init() {
-	flag.StringVar(&iface, "iface", "", "set the interface to listen on")
+	flag.StringVar(&iface, "i", "", "set the interface to listen on")
 }
 
 func main() {
 	flag.Parse()
 	if iface == "" {
-		fmt.Println("argument --iface is required")
+		fmt.Println("argument -i is required")
 		os.Exit(1)
 	}
 

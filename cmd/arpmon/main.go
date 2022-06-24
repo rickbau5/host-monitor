@@ -17,13 +17,13 @@ var (
 )
 
 func init() {
-	flag.StringVar(&iface, "iface", "", "the name of the network interface to load the arp table for")
+	flag.StringVar(&iface, "i", "", "the name of the network interface to load the arp table for")
 }
 
 func main() {
 	flag.Parse()
 	if iface == "" {
-		fmt.Println("argument --iface is required")
+		fmt.Println("argument -i is required")
 		os.Exit(1)
 	}
 
