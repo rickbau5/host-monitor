@@ -56,6 +56,7 @@ func (h *HostMap) update(addr Addr, emitChanges bool) bool {
 		h.hosts[mac] = []*member{
 			{
 				addr:     addr,
+				active:   true,
 				lastSeen: now,
 			},
 		}
@@ -73,32 +74,48 @@ func (h *HostMap) update(addr Addr, emitChanges bool) bool {
 		return true
 	}
 
-	// update the last seen time
+	// update the last seen time if we've seen this ip already
 	var found bool
+	var previousAddr *Addr
 	for _, m := range existing {
 		if m.addr.IP == addr.IP {
-			found = true
+			// we've seen this ip before for this mac mark it as active
 			m.lastSeen = now
-			break
+			m.active = true
+			found = true
+		} else {
+			if m.active {
+				// this is the previous active addr for the mac
+				// shallow copy
+				previousAddr = new(Addr)
+				*previousAddr = m.addr
+			}
+			// not the current ip for the mac (anymore)
+			m.active = false
 		}
 	}
 
-	if found {
+	if found && previousAddr == nil {
+		// did not change addresses
 		return false
 	}
 
-	members := append(existing, &member{
-		addr:     addr,
-		lastSeen: now,
-	})
-	h.hosts[mac] = members
+	if !found {
+		// if we haven't seen this ip for this host add it to the member list for that mac
+		h.hosts[mac] = append(existing, &member{
+			addr:     addr,
+			active:   true,
+			lastSeen: now,
+		})
+	}
 
 	if emitChanges {
+		// emit a change regardless if we've seen the ip already for this mac - the device switched back
 		h.sendChange(Change{
 			ChangeType:   IPChange,
 			Addr:         addr,
 			Online:       true,
-			PreviousAddr: &existing[len(existing)-1].addr,
+			PreviousAddr: previousAddr,
 			LastSeen:     now,
 		})
 	}
@@ -150,11 +167,28 @@ func (h *HostMap) sendChange(change Change) {
 	}
 }
 
+// Reset clears all the currently tracked hosts.
+func (h *HostMap) Reset() {
+	h.hostsLock.Lock()
+	h.hosts = make(map[string][]*member)
+	h.hostsLock.Unlock()
+}
+
+// ResetAndLoad resets the host map and loads the map with a list of addresses. This does not emit any changes to
+// notifications. Use UpdateAddresses if notifications are required.
+func (h *HostMap) ResetAndLoad(addrs []Addr) {
+	h.Reset()
+	for _, addr := range addrs {
+		h.update(addr, false)
+	}
+}
+
+// UpdateAddresses updates the existing host map with the specified addresses, emitting notifications as needed.
 func (h *HostMap) UpdateAddresses(addrs []Addr) bool {
 	// update with the new addresses
 	var changed bool
 	for _, addr := range addrs {
-		changed = changed || h.update(addr, true)
+		changed = h.update(addr, true) || changed
 	}
 
 	// reap old entries if expired
@@ -228,6 +262,7 @@ func (c Change) String() string {
 
 type member struct {
 	addr     Addr
+	active   bool
 	lastSeen time.Time
 }
 
