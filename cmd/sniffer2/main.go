@@ -9,8 +9,9 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"sync"
+	"time"
 
+	"github.com/go-logr/stdr"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	hostmonitor "github.com/rickbau5/host-monitor"
@@ -18,42 +19,22 @@ import (
 
 // adapted from pcapdump example https://github.com/google/gopacket/blob/master/examples/pcapdump/main.go
 
-var iface = flag.String("i", "", "Name of the interface to read packets from")
-
 const (
-	snapLen = 65536
+	snapLen            = 65536
+	defaultOfflineTime = 5 * time.Minute
 )
 
-var hostNames = NewMacHostMap()
-
-func NewMacHostMap() *MacHostMap {
-	return &MacHostMap{
-		m:   make(map[string]string),
-		mux: &sync.RWMutex{},
-	}
-}
-
-type MacHostMap struct {
-	m   map[string]string
-	mux *sync.RWMutex
-}
-
-func (m *MacHostMap) Set(mac net.HardwareAddr, hostName string) {
-	m.mux.Lock()
-	m.m[mac.String()] = hostName
-	defer m.mux.Unlock()
-}
-
-func (m *MacHostMap) Get(mac net.HardwareAddr) string {
-	m.mux.RLock()
-	defer m.mux.RUnlock()
-	return m.m[mac.String()]
-}
+var iface = flag.String("i", "", "Name of the interface to read packets from")
+var offlineTime = flag.Duration("offline-timeout", defaultOfflineTime, "Amount of time that must elapse before a host is considered inactive")
 
 func main() {
 	flag.Parse()
 	if *iface == "" {
 		log.Fatal("--i required")
+	}
+
+	if *offlineTime < 0 {
+		*offlineTime = defaultOfflineTime
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -67,16 +48,40 @@ func main() {
 
 	source := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
 
-	hosts := hostmonitor.NewHostMap()
+	// keep track of MAC -> IP addresses
+	hosts := hostmonitor.NewHostMap(
+		hostmonitor.LoggerOption(stdr.New(log.New(os.Stdout, "", log.LstdFlags))),
+		hostmonitor.HostOfflineTimeoutOption(*offlineTime),
+	)
+	// keep track of MAC -> Host Names from DHCP
+	hostNames := NewMacHostMap()
+
 	go func() {
+		// notifications are emitted when a host changes
+		//  * new IP
+		//  * host comes online
+		//  * host goes offline
 		for notification := range hosts.Notifications() {
 			hostName := hostNames.Get(notification.Addr.MAC)
 			log.Printf("host '%s' changed: %s", hostName, notification)
 		}
 	}()
 
+	// composes the two separate handlers for handling host updates and hostname updates into a single handler
+	var (
+		updateHosts     = UpdateHosts(hosts)
+		updateHostNames = UpdateHostNames(hostNames)
+	)
+	packetHandler := PacketHandler(func(ctx context.Context, packet gopacket.Packet) error {
+		if err := updateHosts(ctx, packet); err != nil {
+			return err
+		}
+
+		return updateHostNames(ctx, packet)
+	})
+
 	log.Println("ready to read packets")
-	err = readPackets(ctx, source.Packets(), hosts, handler)
+	err = readPackets(ctx, source.Packets(), packetHandler)
 	if err != nil {
 		log.Fatal("error reading packets:", err)
 	}
@@ -84,39 +89,7 @@ func main() {
 	log.Println("exiting...")
 }
 
-type Handler func(ctx context.Context, dhcp *layers.DHCPv4) error
-
-func handler(_ context.Context, dhcp *layers.DHCPv4) error {
-	manufacturer := hostmonitor.FindManufacturer(dhcp.ClientHWAddr)
-	var hostName string
-	for _, opt := range dhcp.Options {
-		if opt.Type != layers.DHCPOptHostname {
-			continue
-		}
-
-		hostName = string(opt.Data)
-	}
-
-	if hostName != "" {
-		hostNames.Set(dhcp.ClientHWAddr, hostName)
-	} else {
-		hostName = "<unknown>"
-	}
-
-	// see http://www.tcpipguide.com/free/t_DHCPMessageFormat.htm
-	// not always set
-	ip := dhcp.YourClientIP
-	if ip.IsUnspecified() {
-		ip = dhcp.YourClientIP // won't be set unless we requested it (unless the iface supports promiscuous mode)
-	}
-
-	log.Printf("dhcp(%d) from %s(ip=%s), hostname=(%s), manufacturer=(%s)",
-		dhcp.Operation, dhcp.ClientHWAddr, ip, hostName, manufacturer)
-
-	return nil
-}
-
-func readPackets(ctx context.Context, packets <-chan gopacket.Packet, hosts *hostmonitor.HostMap, handler Handler) error {
+func readPackets(ctx context.Context, packets <-chan gopacket.Packet, handler PacketHandler) error {
 	for {
 		var (
 			packet gopacket.Packet
@@ -131,48 +104,100 @@ func readPackets(ctx context.Context, packets <-chan gopacket.Packet, hosts *hos
 			return ctx.Err()
 		}
 
+		if err := handler(ctx, packet); err != nil {
+			log.Println("error handling packet:", err)
+		}
+	}
+}
+
+type PacketHandler func(ctx context.Context, packet gopacket.Packet) error
+
+// UpdateHosts keeps the provided hosts up to date with the addresses of hosts on private network.
+// It's assumed we're running on a private a network like 192.168.0.0 or 10.0.0.0
+func UpdateHosts(hosts *hostmonitor.HostMap) PacketHandler {
+	return func(_ context.Context, packet gopacket.Packet) error {
+
 		var sourceMac, dstMac net.HardwareAddr
-		sourceIp := net.IPv4zero
+		ipInNetwork := net.IPv4zero
+
 		if layer := packet.Layer(layers.LayerTypeEthernet); layer != nil {
 			eth, _ := layer.(*layers.Ethernet)
 			sourceMac = eth.SrcMAC
 			dstMac = eth.DstMAC
 		}
+
 		if layer := packet.Layer(layers.LayerTypeIPv4); layer != nil {
 			ipv4, _ := layer.(*layers.IPv4)
-			if len(ipv4.SrcIP) > 0 && (ipv4.SrcIP.IsPrivate() || ipv4.SrcIP.IsUnspecified()) {
-				sourceIp = ipv4.SrcIP
-			} else if len(ipv4.SrcIP) > 0 && (ipv4.DstIP.IsPrivate() || ipv4.DstIP.IsUnspecified()) {
-				sourceIp = ipv4.DstIP
-				sourceMac, dstMac = dstMac, sourceMac
+
+			if len(ipv4.SrcIP) > 0 {
+				if ipv4.SrcIP.IsPrivate() {
+					// packet going out of the network from a private host
+					ipInNetwork = ipv4.SrcIP
+				} else if ipv4.DstIP.IsPrivate() {
+					// packet coming in from outside network
+					ipInNetwork = ipv4.DstIP
+					sourceMac, dstMac = dstMac, sourceMac
+				}
 			}
 		}
 
-		if !sourceIp.IsPrivate() && !sourceIp.IsUnspecified() {
-			// drop
-			continue
+		// unknown ip address (could be a dhcp broadcast)
+		if ipInNetwork.IsUnspecified() {
+			// skip
+			return nil
 		}
 
-		if !sourceIp.IsUnspecified() {
-			ip, _ := netip.AddrFromSlice(sourceIp)
-			hosts.UpdateAddresses([]hostmonitor.Addr{
-				{
-					MAC:  sourceMac,
-					IP:   ip,
-					Port: 0,
-				},
-			})
+		// safety check for private host
+		if !ipInNetwork.IsPrivate() {
+			// skip
+			return nil
 		}
 
+		ip, _ := netip.AddrFromSlice(ipInNetwork)
+		hosts.UpdateAddresses([]hostmonitor.Addr{
+			{
+				MAC: sourceMac,
+				IP:  ip,
+			},
+		})
+
+		return nil
+	}
+}
+
+// UpdateHostNames watches for dhcpv4 packets and updates the MacHostMap with this names, if set.
+// This also logs the dhcp packet info
+func UpdateHostNames(hostNames *MacHostMap) PacketHandler {
+	return func(_ context.Context, packet gopacket.Packet) error {
 		// extract dhcp4 for host
 		layer := packet.Layer(layers.LayerTypeDHCPv4)
 		dhcp, ok := layer.(*layers.DHCPv4)
 		if !ok {
-			continue
+			// nothing to do - not a DHCPv4 Packet
+			return nil
 		}
 
-		if err := handler(ctx, dhcp); err != nil {
-			log.Println("error handling packet:", err)
+		manufacturer := hostmonitor.FindManufacturer(dhcp.ClientHWAddr)
+		var hostName string
+		for _, opt := range dhcp.Options {
+			if opt.Type != layers.DHCPOptHostname {
+				continue
+			}
+
+			hostName = string(opt.Data)
 		}
+
+		if hostName != "" {
+			hostNames.Set(dhcp.ClientHWAddr, hostName)
+		} else {
+			hostName = "<unknown>"
+		}
+
+		// see http://www.tcpipguide.com/free/t_DHCPMessageFormat.htm
+		// not always set
+		log.Printf("dhcp(%d) from %s(ip=%s), hostname=(%s), manufacturer=(%s)",
+			dhcp.Operation, dhcp.ClientHWAddr, dhcp.YourClientIP, hostName, manufacturer)
+
+		return nil
 	}
 }

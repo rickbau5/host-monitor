@@ -12,85 +12,32 @@ import (
 	"github.com/go-logr/stdr"
 )
 
-// From https://github.com/irai/packet/blob/3d13deba3c30b27bbb6da8ec122a96e45fe92a27/addr.go#L12-L16
-type Addr struct {
-	MAC  net.HardwareAddr
-	IP   netip.Addr
-	Port uint16
-}
-
-func (addr Addr) String() string {
-	return fmt.Sprintf("mac=(%s) ip=(%s) port=(%d)", addr.MAC, addr.IP, addr.Port)
-}
-
-type ChangeType int
-
-const (
-	UnknownChange ChangeType = iota
-	IPChange
-	OnlineChange
-	OfflineChange
-)
-
-func (ct ChangeType) String() string {
-	switch ct {
-	case IPChange:
-		return "ip change"
-	case OnlineChange:
-		return "online"
-	case OfflineChange:
-		return "offline"
-	default:
-		return "unknown"
-	}
-}
-
-type Change struct {
-	ChangeType ChangeType
-	Addr       Addr
-	Online     bool
-
-	PreviousAddr *Addr
-	LastSeen     time.Time
-}
-
-func (c Change) String() string {
-	return fmt.Sprintf("change=(%s) online=(%v) addr=(%s) previousAddr=(%s) lastSeen=(%s)",
-		c.ChangeType, c.Online, c.Addr, c.PreviousAddr, c.LastSeen)
-}
-
-type member struct {
-	addr     Addr
-	lastSeen time.Time
-}
-
-func (m member) String() string {
-	return fmt.Sprintf("%s lastSeen=(%s)", m.addr.String(), m.lastSeen.Format(time.RFC3339))
-}
-
 type HostMap struct {
 	changes chan Change
 
-	logger logr.Logger
-
 	hosts     map[string][]*member
 	hostsLock *sync.Mutex
+
+	// configurable
+	offlineTimeout time.Duration
+	logger         logr.Logger
 }
 
-func NewHostMap() *HostMap {
+func NewHostMap(options ...HostMapOption) *HostMap {
 	h := &HostMap{
 		changes:   make(chan Change, 128),
 		hosts:     make(map[string][]*member),
 		hostsLock: &sync.Mutex{},
 
-		logger: stdr.New(log.Default()),
+		offlineTimeout: 5 * time.Minute,
+		logger:         stdr.New(log.Default()),
+	}
+
+	for _, option := range options {
+		option.apply(h)
 	}
 
 	return h
-}
-
-func (h *HostMap) SetLogger(logger logr.Logger) {
-	h.logger = logger
 }
 
 func (h *HostMap) update(addr Addr, emitChanges bool) bool {
@@ -230,4 +177,60 @@ func (h *HostMap) PrintTable() {
 
 func (h *HostMap) Notifications() <-chan Change {
 	return h.changes
+}
+
+// From https://github.com/irai/packet/blob/3d13deba3c30b27bbb6da8ec122a96e45fe92a27/addr.go#L12-L16
+type Addr struct {
+	MAC  net.HardwareAddr
+	IP   netip.Addr
+	Port uint16
+}
+
+func (addr Addr) String() string {
+	return fmt.Sprintf("mac=(%s) ip=(%s) port=(%d)", addr.MAC, addr.IP, addr.Port)
+}
+
+type ChangeType int
+
+const (
+	UnknownChange ChangeType = iota
+	IPChange
+	OnlineChange
+	OfflineChange
+)
+
+func (ct ChangeType) String() string {
+	switch ct {
+	case IPChange:
+		return "ip change"
+	case OnlineChange:
+		return "online"
+	case OfflineChange:
+		return "offline"
+	default:
+		return "unknown"
+	}
+}
+
+type Change struct {
+	ChangeType ChangeType
+	Addr       Addr
+	Online     bool
+
+	PreviousAddr *Addr
+	LastSeen     time.Time
+}
+
+func (c Change) String() string {
+	return fmt.Sprintf("change=(%s) online=(%v) addr=(%s) previousAddr=(%s) lastSeen=(%s)",
+		c.ChangeType, c.Online, c.Addr, c.PreviousAddr, c.LastSeen)
+}
+
+type member struct {
+	addr     Addr
+	lastSeen time.Time
+}
+
+func (m member) String() string {
+	return fmt.Sprintf("%s lastSeen=(%s)", m.addr.String(), m.lastSeen.Format(time.RFC3339))
 }
