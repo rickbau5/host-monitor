@@ -24,3 +24,7 @@ jobs:
 
     - name: Build
       run: make build
+
+    - name: Test
+      # only run the tests in the top level package
+      run: go test -v github.com/${{ github.repository }}
